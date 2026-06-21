@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>Folien-Extraktor v0.6</title>
+<title>Folien-Extraktor v0.10</title>
 <style>
   :root{ color-scheme: light; --bg:#f4f1ea; --card:#ffffff; --ink:#1c1b18; --mut:#6b6a64;
          --line:#e0ddd4; --acc:#3a6b4f; --acc2:#2a5740; --warn:#b4791f; --dup:#9a4a2f; }
@@ -71,7 +71,7 @@
 <div class="wrap">
   <header>
     <h1>Folien-Extraktor</h1>
-    <div class="v">v0.6 · NotebookLM-Screenshots → PDF</div>
+    <div class="v">v0.10 · NotebookLM-Screenshots → PDF</div>
   </header>
   <p class="hint">Lade deine iPhone-Screenshots der Präsentation hoch. Die App erkennt die einzelnen Folien
   automatisch, du prüfst sie kurz (löschen / umsortieren / Reihenfolge umkehren) und bekommst ein PDF — eine Folie pro Seite.</p>
@@ -144,6 +144,21 @@ function detectWatermarks(s,W,H){
   }
   wm.sort((x,y)=>x-y); return wm;
 }
+function lenientWMbottoms(s,W,H){   // wie detectWatermarks, aber OHNE darkL-Bedingung (für Schluss-Folie mit Links-Inhalt)
+  const {darkR}=s; const sW=W/1179, sH=H/2556;
+  const dThr=Math.max(3,Math.round(8*sW)), runMin=Math.max(1,Math.round(2*sH)), runMax=Math.max(6,Math.round(15*sH)), darkCap=Math.round(120*sW);
+  const win=Math.max(3,Math.round(7*sH)), winThr=Math.max(3,Math.round(6*sW)), topGuard=Math.round(115*sH);
+  const wmrow=new Uint8Array(H);
+  for(let y=0;y<H;y++) wmrow[y]= darkR[y]>=dThr ?1:0;
+  const runs=[]; let st=-1;
+  for(let y=0;y<H;y++){ if(wmrow[y]&&st<0)st=y; if(!wmrow[y]&&st>=0){runs.push([st,y]);st=-1;} }
+  if(st>=0)runs.push([st,H]);
+  const wm=[];
+  for(const [a,b] of runs){ if(!(b-a>=runMin&&b-a<=runMax))continue; if(maxIn(darkR,a,b)>darkCap)continue;
+    const aE=a>=win&&maxIn(darkR,a-win,a)<winThr, bE=b+win<H&&maxIn(darkR,b,b+win)<winThr;
+    if((aE||bE)&&b>topGuard) wm.push(b); }
+  return wm;
+}
 function detectSlides(s,W,H){
   const {content,titleInk}=s; const sW=W/1179, sH=H/2556;
   const thr=Math.max(4,Math.floor(0.008*W));
@@ -160,7 +175,9 @@ function detectSlides(s,W,H){
   for(let i=0;i<wm.length;i++){ const wb=wm[i]; const f=fc(prev+1);
     let top=Math.max(fcStart,f-mTop), bot=Math.min(H,wb+mBot); prev=wb; cand.push({top,bot,idx:i,wm:true}); }
   if(hasTrail && wm.length){ const f=fc(wm[wm.length-1]+1);
-    if(f<Tstart && Tstart-f>trailGap) cand.push({top:Math.max(fcStart,f-mTop),bot:Math.min(H,Tstart+mTail),idx:wm.length,wm:false}); }
+    if(f<Tstart && Tstart-f>trailGap){ const tb=Math.min(H,Tstart+mTail);
+      const lw=lenientWMbottoms(s,W,H); const hasW=lw.some(b=> b>=tb-Math.round(80*sH) && b<=tb+5);
+      cand.push({top:Math.max(fcStart,f-mTop),bot:tb,idx:wm.length,wm:hasW}); } }
   const slides=[];
   for(const c of cand){ const h=c.bot-c.top;
     if(c.idx===0 && topPartial) continue;
@@ -208,7 +225,7 @@ function buildPDF(images){
   const N=images.length, nObj=2+N*3; const offsets=new Array(nObj+1).fill(0);
   const obj=(num,w)=>{ offsets[num]=offset; pstr(`${num} 0 obj\n`); w(); pstr(`\nendobj\n`); };
   push(new Uint8Array([0x25,0x50,0x44,0x46,0x2D,0x31,0x2E,0x34,0x0A,0x25,0xFF,0xFF,0xFF,0xFF,0x0A])); // %PDF-1.4 + binary marker
-  obj(1,()=>pstr('<< /Type /Catalog /Pages 2 0 R >>'));
+  obj(1,()=>pstr('<< /Type /Catalog /Pages 2 0 R /PageLayout /SinglePage >>'));
   const kids=images.map((_,i)=>`${3+3*i} 0 R`).join(' ');
   obj(2,()=>pstr(`<< /Type /Pages /Kids [${kids}] /Count ${N} >>`));
   images.forEach((im,i)=>{
@@ -284,8 +301,9 @@ const fileEl=$("file"), pick=$("pick"), drop=$("drop"), statusEl=$("status"),
 const DETECT_W=700;            // Erkennung auf heruntergerechneter Kopie (umgeht iOS-Canvas-Limit)
 let sources={};                // name -> {img, W, H}
 let slides=[];                 // {name, top, bot, wm, tH}
-let wmRemove=false, busy=false;
+let wmRemove=true, busy=false;
 let dbgEl=null;
+wmSw.classList.toggle("on", wmRemove);   // Schalter startet AN
 function setDebug(html){ if(!dbgEl){ dbgEl=document.createElement("pre");
     dbgEl.style.cssText="white-space:pre-wrap;font-size:11px;color:#6b6a64;background:#fff;border:1px solid #e0ddd4;border-radius:10px;padding:9px 10px;margin:10px 2px;overflow:auto;";
     statusEl.after(dbgEl); } dbgEl.innerHTML=html; }
@@ -320,7 +338,7 @@ function sampleLum(data){ let s=0,mn=255,mx=0,c=0; const step=Math.max(4,(data.l
   return {avg:Math.round(s/Math.max(1,c)), mn:Math.round(mn), mx:Math.round(mx)}; }
 
 async function loadFiles(files){
-  if(busy) return; busy=true; pdfArea.innerHTML=""; tilesEl.innerHTML=""; bar.style.display="none";
+  if(busy) return; busy=true; pdfArea.innerHTML=""; tilesEl.innerHTML=""; $("review").innerHTML=""; bar.style.display="none";
   files.sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
   statusEl.innerHTML='<span class="spin"></span>Folien werden erkannt…';
   await new Promise(r=>setTimeout(r,30));
@@ -367,13 +385,18 @@ function thumb(sl){ const src=sources[sl.name], W=src.W, h=sl.bot-sl.top;
   const c=document.createElement("canvas"); c.width=tw; c.height=th;
   c.getContext("2d").drawImage(src.drawable,0,sl.top,W,h,0,0,tw,th);
   c.style.cssText="width:100%;height:auto;border-radius:8px;border:1px solid var(--line);display:block"; return c; }
-function renderTiles(){ tilesEl.innerHTML=""; const df=dupFlags();
+function renderTiles(){ tilesEl.innerHTML=""; const df=dupFlags(); const reviewEl=$("review");
+  const incn=slides.filter(s=>!s.wm).length;
+  reviewEl.innerHTML = incn>0
+    ? '<div style="background:#fdecea;border:1.5px solid #d9534f;color:#a02115;border-radius:12px;padding:12px 14px;font-size:13.5px;font-weight:600;line-height:1.55;margin:6px 0 2px">⚠ '+incn+' Folie'+(incn>1?'n':'')+' ohne Wasserzeichen am unteren Rand — sehr wahrscheinlich unten abgeschnitten. Bitte prüfen und löschen oder die Folie sauber neu aufnehmen.</div>'
+    : '';
   slides.forEach((sl,i)=>{
     const t=document.createElement("div"); t.className="tile";
+    if(!sl.wm){ t.style.borderColor="#d9534f"; t.style.borderWidth="2.5px"; t.style.background="#fdecea"; }
     const num=document.createElement("div"); num.className="num"; num.textContent=(i+1);
     const tw=document.createElement("div"); tw.className="thumbwrap"; tw.appendChild(thumb(sl));
     const badges=document.createElement("div"); badges.className="badges";
-    if(!sl.wm){ const b=document.createElement("span"); b.className="badge warn"; b.textContent="⚠ Unterkante prüfen"; badges.appendChild(b); }
+    if(!sl.wm){ const b=document.createElement("span"); b.className="badge"; b.style.cssText="background:#d9534f;color:#fff;font-weight:700"; b.textContent="⚠ evtl. unvollständig"; badges.appendChild(b); }
     if(df[i]){ const b=document.createElement("span"); b.className="badge dup"; b.textContent="möglicherweise doppelt"; badges.appendChild(b); }
     if(badges.children.length) tw.appendChild(badges);
     const ctr=document.createElement("div"); ctr.className="ctrls";
