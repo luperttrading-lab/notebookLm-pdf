@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Folien-Extraktor v0.6</title>
+<style>
+  :root{ color-scheme: light; --bg:#f4f1ea; --card:#ffffff; --ink:#1c1b18; --mut:#6b6a64;
+         --line:#e0ddd4; --acc:#3a6b4f; --acc2:#2a5740; --warn:#b4791f; --dup:#9a4a2f; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; padding:0; }
+  #bg{ position:fixed; inset:0; z-index:0; background:var(--bg); }
+  body{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; color:var(--ink);
+        position:relative; z-index:1; -webkit-text-size-adjust:100%; }
+  .wrap{ max-width:760px; margin:0 auto; padding:16px 14px 140px; position:relative; z-index:1; }
+  header h1{ font-size:20px; margin:6px 0 2px; }
+  header .v{ color:var(--mut); font-size:12.5px; margin-bottom:14px; }
+  .hint{ color:var(--mut); font-size:13.5px; line-height:1.5; margin:0 0 14px; }
+  .drop{ background:var(--card); border:1.5px dashed var(--line); border-radius:16px; padding:26px 18px;
+         text-align:center; }
+  .drop p{ margin:10px 0 0; color:var(--mut); font-size:13px; }
+  .btn{ display:inline-block; background:var(--acc); color:#fff; border:none; border-radius:12px;
+        padding:13px 18px; font-size:15px; font-weight:600; cursor:pointer; }
+  .btn:active{ background:var(--acc2); }
+  .btn.sec{ background:#fff; color:var(--ink); border:1px solid var(--line); font-weight:600; }
+  .btn.sec:active{ background:#f0eee7; }
+  .btn[disabled]{ opacity:.5; }
+  #status{ font-size:13.5px; color:var(--mut); margin:14px 2px; min-height:18px; }
+  .tile{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:10px;
+         margin:10px 0; display:flex; gap:10px; align-items:flex-start; }
+  .tile .num{ font-weight:700; color:var(--mut); font-size:13px; min-width:22px; text-align:center; padding-top:4px; }
+  .tile img{ width:100%; border-radius:8px; display:block; border:1px solid var(--line); }
+  .thumbwrap{ flex:1; min-width:0; }
+  .badges{ margin-top:7px; display:flex; flex-wrap:wrap; gap:6px; }
+  .badge{ font-size:11.5px; font-weight:600; padding:3px 8px; border-radius:999px; }
+  .badge.warn{ background:#fbf1dd; color:var(--warn); }
+  .badge.dup{ background:#f7e3da; color:var(--dup); }
+  .ctrls{ display:flex; flex-direction:column; gap:6px; }
+  .ic{ width:42px; height:38px; border-radius:9px; border:1px solid var(--line); background:#fff;
+       font-size:17px; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+  .ic:active{ background:#f0eee7; }
+  .ic.del:active{ background:#f7dad3; }
+  .bar{ position:fixed; left:0; right:0; bottom:0; z-index:5; background:rgba(255,255,255,.96);
+        backdrop-filter:saturate(1.2) blur(6px); border-top:1px solid var(--line);
+        padding:10px 14px calc(10px + env(safe-area-inset-bottom)); display:none; gap:8px; flex-wrap:wrap; }
+  .bar .row1{ display:flex; gap:8px; width:100%; }
+  .bar .btn{ flex:1; padding:13px 8px; }
+  .toggle{ display:flex; align-items:center; gap:9px; width:100%; font-size:13.5px; color:var(--ink);
+           background:#fff; border:1px solid var(--line); border-radius:11px; padding:9px 12px; }
+  .sw{ width:44px; height:26px; border-radius:999px; background:#cfccc3; position:relative; transition:.15s; flex:0 0 auto; }
+  .sw.on{ background:var(--acc); }
+  .sw::after{ content:""; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%;
+              background:#fff; transition:.15s; }
+  .sw.on::after{ left:21px; }
+  #pdfArea{ margin:12px 2px; }
+  #pdfArea a{ color:var(--acc2); font-weight:600; font-size:14px; }
+  .overlay{ position:fixed; inset:0; z-index:30; background:rgba(28,27,24,.45);
+            display:none; align-items:center; justify-content:center; padding:24px; }
+  .modal{ background:#fff; border-radius:16px; padding:20px; max-width:340px; width:100%; }
+  .modal p{ margin:0 0 16px; font-size:14.5px; line-height:1.5; }
+  .modal .mrow{ display:flex; gap:8px; }
+  .modal .btn{ flex:1; }
+  .spin{ width:22px;height:22px;border:3px solid var(--line); border-top-color:var(--acc);
+         border-radius:50%; animation:sp .8s linear infinite; display:inline-block; vertical-align:middle; margin-right:8px;}
+  @keyframes sp{ to{ transform:rotate(360deg);} }
+</style>
+</head>
+<body>
+<div id="bg"></div>
+<div class="wrap">
+  <header>
+    <h1>Folien-Extraktor</h1>
+    <div class="v">v0.6 · NotebookLM-Screenshots → PDF</div>
+  </header>
+  <p class="hint">Lade deine iPhone-Screenshots der Präsentation hoch. Die App erkennt die einzelnen Folien
+  automatisch, du prüfst sie kurz (löschen / umsortieren / Reihenfolge umkehren) und bekommst ein PDF — eine Folie pro Seite.</p>
+
+  <div class="drop" id="drop">
+    <button class="btn" id="pick">Screenshots auswählen</button>
+    <p>Mehrere auf einmal möglich · PNG/JPG</p>
+    <input type="file" id="file" accept="image/*" multiple hidden>
+  </div>
+
+  <div id="status"></div>
+  <div id="pdfArea"></div>
+  <div id="review"></div>
+  <div id="tiles"></div>
+</div>
+
+<div class="bar" id="bar">
+  <div class="toggle" id="wmToggle">
+    <div class="sw" id="wmSw"></div>
+    <div>„NotebookLM"-Wasserzeichen entfernen</div>
+  </div>
+  <div class="row1">
+    <button class="btn sec" id="reverseBtn">↕ Reihenfolge umkehren</button>
+    <button class="btn" id="makePdf">PDF erstellen</button>
+  </div>
+</div>
+
+<div class="overlay" id="overlay"><div class="modal">
+  <p id="modalText"></p>
+  <div class="mrow"><button class="btn sec" id="modalNo">Abbrechen</button><button class="btn" id="modalYes">OK</button></div>
+</div></div>
+
+<script>
+// ---- Folien-Erkennung (Port der validierten Python-Pipeline) ----
+function rowStats(data, W, H){
+  // data: Uint8ClampedArray RGBA
+  const content=new Int32Array(H), darkR=new Int32Array(H), darkL=new Int32Array(H), titleInk=new Int32Array(H);
+  const xR=Math.floor(0.85*W), cL=Math.floor(0.18*W), cR=Math.ceil(0.82*W);
+  for(let y=0;y<H;y++){
+    let c=0,dr=0,dl=0,ti=0, base=y*W*4;
+    for(let x=0;x<W;x++){
+      const i=base+x*4, r=data[i],g=data[i+1],b=data[i+2];
+      const lum=(r+g+b)/3, mx=Math.max(r,g,b), mn=Math.min(r,g,b);
+      if(lum<100||(mx-mn)>45) c++;
+      if(lum<160 && x>=cL && x<cR) ti++;   // nur Mitte → Rand-Icons (Statusleiste/App-Leiste) zählen nicht
+      if(lum<150){ if(x>=xR) dr++; else dl++; }
+    }
+    content[y]=c; darkR[y]=dr; darkL[y]=dl; titleInk[y]=ti;
+  }
+  return {content,darkR,darkL,titleInk};
+}
+function maxIn(arr,a,b){let m=0;for(let i=a;i<b;i++)if(arr[i]>m)m=arr[i];return m;}
+function detectWatermarks(s,W,H){
+  const {darkR,darkL}=s; const sW=W/1179, sH=H/2556;
+  const dThr=Math.max(3,Math.round(8*sW)), lThr=Math.max(3,Math.round(5*sW));
+  const runMin=Math.max(1,Math.round(2*sH)), runMax=Math.max(6,Math.round(15*sH)), darkCap=Math.round(120*sW);
+  const win=Math.max(3,Math.round(7*sH)), winThr=Math.max(3,Math.round(6*sW)), topGuard=Math.round(115*sH);
+  const wmrow=new Uint8Array(H);
+  for(let y=0;y<H;y++) wmrow[y]=(darkR[y]>=dThr && darkL[y]<=lThr)?1:0;
+  const runs=[]; let st=-1;
+  for(let y=0;y<H;y++){ if(wmrow[y]&&st<0)st=y; if(!wmrow[y]&&st>=0){runs.push([st,y]);st=-1;} }
+  if(st>=0)runs.push([st,H]);
+  const wm=[];
+  for(const [a,b] of runs){
+    if(!(b-a>=runMin&&b-a<=runMax))continue;
+    if(maxIn(darkR,a,b)>darkCap)continue;
+    const aE = a>=win && maxIn(darkR,a-win,a)<winThr;
+    const bE = b+win<H && maxIn(darkR,b,b+win)<winThr;
+    if((aE||bE) && b>topGuard) wm.push(b);
+  }
+  wm.sort((x,y)=>x-y); return wm;
+}
+function detectSlides(s,W,H){
+  const {content,titleInk}=s; const sW=W/1179, sH=H/2556;
+  const thr=Math.max(4,Math.floor(0.008*W));
+  const wm=detectWatermarks(s,W,H);
+  const tpA=Math.round(112*sH), tpB=Math.round(150*sH);
+  let acc=0,n=0; for(let y=tpA;y<tpB&&y<H;y++){acc+=content[y];n++;}
+  const topPartial = n>0 && acc/n>=thr;
+  let yb=H-1; while(yb>0&&content[yb]<thr)yb--; const Tstart=yb+1; const hasTrail=H-Tstart>=Math.round(30*sH);
+  const fcStart=Math.round(110*sH), inkThr=Math.max(8,Math.round(20*sW));
+  const fc=(y0)=>{ for(let y=Math.max(y0,fcStart);y<H;y++) if(titleInk[y]>=inkThr) return y; return Math.max(y0,fcStart); };
+  const mTop=Math.round(20*sH), mBot=Math.round(26*sH), mTail=Math.round(18*sH), trailGap=Math.round(300*sH);
+  const hMin=Math.round(300*sH), hMax=Math.round(1300*sH);
+  const cand=[]; let prev=-1;
+  for(let i=0;i<wm.length;i++){ const wb=wm[i]; const f=fc(prev+1);
+    let top=Math.max(fcStart,f-mTop), bot=Math.min(H,wb+mBot); prev=wb; cand.push({top,bot,idx:i,wm:true}); }
+  if(hasTrail && wm.length){ const f=fc(wm[wm.length-1]+1);
+    if(f<Tstart && Tstart-f>trailGap) cand.push({top:Math.max(fcStart,f-mTop),bot:Math.min(H,Tstart+mTail),idx:wm.length,wm:false}); }
+  const slides=[];
+  for(const c of cand){ const h=c.bot-c.top;
+    if(c.idx===0 && topPartial) continue;
+    if(h<hMin||h>hMax) continue;
+    slides.push(c);
+  }
+  return slides;
+}
+// ---- avg-hash 16x16 on a crop, from full image pixels ----
+function aHash(data,W,top,bot){
+  const N=16, h=bot-top; const cell=new Float64Array(N*N); const cnt=new Int32Array(N*N);
+  for(let y=top;y<bot;y++){ const gy=Math.min(N-1,Math.floor((y-top)*N/h)); const base=y*W*4;
+    for(let x=0;x<W;x++){ const gx=Math.min(N-1,Math.floor(x*N/W)); const i=base+x*4;
+      cell[gy*N+gx]+=(data[i]+data[i+1]+data[i+2])/3; cnt[gy*N+gx]++; } }
+  let mean=0; for(let k=0;k<N*N;k++){ cell[k]= cnt[k]?cell[k]/cnt[k]:0; mean+=cell[k]; } mean/=N*N;
+  const bits=new Uint8Array(N*N); for(let k=0;k<N*N;k++) bits[k]= cell[k]>mean?1:0; return bits;
+}
+function hamming(a,b){let d=0;for(let i=0;i<a.length;i++)if(a[i]!==b[i])d++;return d;}
+// ---- group + dedup (keep tallest), flag tails ----
+function combine(perImage){
+  // perImage: [{name, data, W, H, slides:[{top,bot,wm}]}]
+  const flat=[];
+  for(const img of perImage) for(const sl of img.slides){
+    const h=sl.bot-sl.top;
+    flat.push({name:img.name, top:sl.top, bot:sl.bot, wm:sl.wm, h,
+      tH:aHash(img.data,img.W,sl.top, sl.top+Math.floor(h*0.5)),
+      fH:aHash(img.data,img.W,sl.top,sl.bot)});
+  }
+  const kept=[];
+  for(const s of flat){
+    let dup=-1;
+    for(let i=0;i<kept.length;i++){ if(hamming(s.tH,kept[i].tH)<18||hamming(s.fH,kept[i].fH)<24){dup=i;break;} }
+    if(dup>=0){ if(s.h>kept[dup].h) kept[dup]=s; }
+    else kept.push(s);
+  }
+  return kept;
+}
+
+// ---- Eigener PDF-Schreiber: bettet JPEGs direkt ein (DCTDecode), keine Bibliothek ----
+function buildPDF(images){
+  // images: [{bytes:Uint8Array, w:int, h:int}]
+  const enc=new TextEncoder(); const parts=[]; let offset=0;
+  const push=(b)=>{ parts.push(b); offset+=b.length; };
+  const pstr=(s)=>push(enc.encode(s));
+  const N=images.length, nObj=2+N*3; const offsets=new Array(nObj+1).fill(0);
+  const obj=(num,w)=>{ offsets[num]=offset; pstr(`${num} 0 obj\n`); w(); pstr(`\nendobj\n`); };
+  push(new Uint8Array([0x25,0x50,0x44,0x46,0x2D,0x31,0x2E,0x34,0x0A,0x25,0xFF,0xFF,0xFF,0xFF,0x0A])); // %PDF-1.4 + binary marker
+  obj(1,()=>pstr('<< /Type /Catalog /Pages 2 0 R >>'));
+  const kids=images.map((_,i)=>`${3+3*i} 0 R`).join(' ');
+  obj(2,()=>pstr(`<< /Type /Pages /Kids [${kids}] /Count ${N} >>`));
+  images.forEach((im,i)=>{
+    const pg=3+3*i,ct=4+3*i,ig=5+3*i;
+    obj(pg,()=>pstr(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${im.w} ${im.h}] /Resources << /XObject << /Im0 ${ig} 0 R >> >> /Contents ${ct} 0 R >>`));
+    const cs=`q\n${im.w} 0 0 ${im.h} 0 0 cm\n/Im0 Do\nQ`;
+    obj(ct,()=>{ pstr(`<< /Length ${cs.length} >>\nstream\n`); pstr(cs); pstr(`\nendstream`); });
+    obj(ig,()=>{ pstr(`<< /Type /XObject /Subtype /Image /Width ${im.w} /Height ${im.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${im.bytes.length} >>\nstream\n`); push(im.bytes); pstr(`\nendstream`); });
+  });
+  const xs=offset; pstr(`xref\n0 ${nObj+1}\n0000000000 65535 f \n`);
+  for(let n=1;n<=nObj;n++) pstr(String(offsets[n]).padStart(10,'0')+' 00000 n \n');
+  pstr(`trailer\n<< /Size ${nObj+1} /Root 1 0 R >>\nstartxref\n${xs}\n%%EOF`);
+  let tot=0; for(const p of parts) tot+=p.length;
+  const out=new Uint8Array(tot); let o=0; for(const p of parts){ out.set(p,o); o+=p.length; } return out;
+}
+
+// ---- Wasserzeichen-Entfernung: Schablonen-Match + Diffusions-Inpaint ----
+const WM_W=82, WM_H=9;
+const WM_B64="H4DjAIBgAAcccM/4PMAwGAABxx539w+3//fnj3fHnf7D//////f/8e//8P/u//fPn9x///w78b/48+f3H/5vDv7vn3z5/8f/D8Of+///9///u8PwY3zvfnj2f+bA";
+function b64ToBits(b64,w,h){
+  const bin = (typeof atob!=='undefined') ? atob(b64) : Buffer.from(b64,'base64').toString('binary');
+  const bytes=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+  const bits=new Uint8Array(w*h); for(let k=0;k<w*h;k++){ bits[k]=(bytes[k>>3]>>(7-(k&7)))&1; } return bits;
+}
+function resizeBin(src,sw,sh,dw,dh){ const o=new Uint8Array(dw*dh);
+  for(let y=0;y<dh;y++)for(let x=0;x<dw;x++){ const sx=Math.min(sw-1,Math.floor(x*sw/dw)), sy=Math.min(sh-1,Math.floor(y*sh/dh)); o[y*dw+x]=src[sy*sw+sx]; } return o; }
+function removeWatermark(data,W,H){
+  const tmpl=b64ToBits(WM_B64,WM_W,WM_H);
+  const rx0=Math.floor(0.74*W), ry0=Math.max(0,H-60), rw=W-rx0, rh=H-ry0;
+  const lum=(i)=>(data[i]+data[i+1]+data[i+2])/3;
+  const rb=new Uint8Array(rw*rh);
+  for(let y=0;y<rh;y++)for(let x=0;x<rw;x++){ const i=((ry0+y)*W+(rx0+x))*4; rb[y*rw+x]= lum(i)<210?1:0; }
+  let best=null;
+  for(const s of [0.85,0.92,1.0,1.08,1.18,1.28]){
+    const tw=Math.max(8,Math.round(WM_W*s)), th=Math.max(6,Math.round(WM_H*s));
+    if(tw>=rw||th>=rh) continue;
+    const tb=resizeBin(tmpl,WM_W,WM_H,tw,th); let tsum=0; for(const v of tb)tsum+=v;
+    for(let yy=0;yy<rh-th;yy+=2)for(let xx=0;xx<rw-tw;xx+=2){
+      let inter=0,psum=0;
+      for(let ty=0;ty<th;ty++){ const ro=(yy+ty)*rw+xx, to=ty*tw;
+        for(let tx=0;tx<tw;tx++){ const pv=rb[ro+tx]; psum+=pv; if(pv&&tb[to+tx])inter++; } }
+      const score=inter/Math.max(1,tsum+psum-inter);
+      if(!best||score>best.score) best={score,mx:rx0+xx,my:ry0+yy,mw:tw,mh:th};
+    }
+  }
+  if(!best||best.score<0.18) return false;
+  const {mx,my,mw,mh}=best;
+  // local background + glyph mask
+  let bgs=[]; for(let y=my;y<my+mh;y++)for(let x=mx;x<mx+mw;x++){ const l=lum((y*W+x)*4); if(l>195)bgs.push(l);} 
+  bgs.sort((a,b)=>a-b); const bg=bgs.length?bgs[bgs.length>>1]:235;
+  const mask=new Uint8Array(W*H);
+  for(let y=my;y<my+mh;y++)for(let x=mx;x<mx+mw;x++){ if(lum((y*W+x)*4)<bg-30) mask[y*W+x]=1; }
+  // dilate 1px
+  const md=mask.slice();
+  for(let y=my-1;y<my+mh+1;y++)for(let x=mx-1;x<mx+mw+1;x++){ if(y<0||x<0||y>=H||x>=W)continue;
+    if(mask[y*W+x]) for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const ny=y+dy,nx=x+dx; if(ny>=0&&nx>=0&&ny<H&&nx<W)md[ny*W+nx]=1;} }
+  // init masked pixels to bg, then diffusion smooth from valid neighbours
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){ if(md[y*W+x]){ const i=(y*W+x)*4; data[i]=data[i+1]=data[i+2]=bg; } }
+  for(let it=0;it<40;it++){ for(let y=my-2;y<my+mh+2;y++)for(let x=mx-2;x<mx+mw+2;x++){
+    if(y<1||x<1||y>=H-1||x>=W-1||!md[y*W+x])continue;
+    for(let c=0;c<3;c++){ const i=(y*W+x)*4+c;
+      data[i]=(data[((y-1)*W+x)*4+c]+data[((y+1)*W+x)*4+c]+data[(y*W+x-1)*4+c]+data[(y*W+x+1)*4+c])>>2; } } }
+  return true;
+}
+
+// ================= UI =================
+const $=id=>document.getElementById(id);
+const fileEl=$("file"), pick=$("pick"), drop=$("drop"), statusEl=$("status"),
+      tilesEl=$("tiles"), bar=$("bar"), wmSw=$("wmSw"), wmToggle=$("wmToggle"),
+      reverseBtn=$("reverseBtn"), makePdf=$("makePdf"), pdfArea=$("pdfArea"),
+      overlay=$("overlay"), modalText=$("modalText"), modalYes=$("modalYes"), modalNo=$("modalNo");
+
+const DETECT_W=700;            // Erkennung auf heruntergerechneter Kopie (umgeht iOS-Canvas-Limit)
+let sources={};                // name -> {img, W, H}
+let slides=[];                 // {name, top, bot, wm, tH}
+let wmRemove=false, busy=false;
+let dbgEl=null;
+function setDebug(html){ if(!dbgEl){ dbgEl=document.createElement("pre");
+    dbgEl.style.cssText="white-space:pre-wrap;font-size:11px;color:#6b6a64;background:#fff;border:1px solid #e0ddd4;border-radius:10px;padding:9px 10px;margin:10px 2px;overflow:auto;";
+    statusEl.after(dbgEl); } dbgEl.innerHTML=html; }
+
+pick.onclick=()=>fileEl.click();
+fileEl.onchange=()=>{ if(fileEl.files.length) loadFiles([...fileEl.files]); };
+["dragover","dragenter"].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault(); drop.style.borderColor="#3a6b4f";}));
+["dragleave","drop"].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault(); drop.style.borderColor="";}));
+drop.addEventListener("drop",ev=>{ const f=[...ev.dataTransfer.files].filter(x=>x.type.startsWith("image")); if(f.length) loadFiles(f); });
+
+async function decodeFile(file){
+  let e1,e2,e3;
+  if(typeof createImageBitmap==="function"){
+    try{ const bmp=await createImageBitmap(file); if(bmp&&bmp.width) return {drawable:bmp,W:bmp.width,H:bmp.height,method:"Bitmap"}; }catch(e){ e1=e; }
+  }
+  try{
+    const durl=await new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=()=>rej(fr.error||new Error("FR")); fr.readAsDataURL(file); });
+    const img=await new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=()=>rej(new Error("img")); im.src=durl; });
+    if(img.naturalWidth) return {drawable:img,W:img.naturalWidth,H:img.naturalHeight,method:"DataURL"};
+  }catch(e){ e2=e; }
+  try{
+    const url=URL.createObjectURL(file);
+    const img=await new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=()=>rej(new Error("img")); im.src=url; });
+    if(img.naturalWidth) return {drawable:img,W:img.naturalWidth,H:img.naturalHeight,method:"ObjURL"};
+  }catch(e){ e3=e; }
+  throw new Error("nicht dekodierbar [Bitmap:"+(e1?e1.name:"\u2013")+" DataURL:"+(e2?(e2.message||e2.name):"\u2013")+" ObjURL:"+(e3?(e3.message||e3.name):"\u2013")+"]");
+}
+
+const detCv=document.createElement("canvas");
+function sampleLum(data){ let s=0,mn=255,mx=0,c=0; const step=Math.max(4,(data.length>>2>>12))*4;
+  for(let i=0;i<data.length;i+=step){ const l=(data[i]+data[i+1]+data[i+2])/3; s+=l; if(l<mn)mn=l; if(l>mx)mx=l; c++; }
+  return {avg:Math.round(s/Math.max(1,c)), mn:Math.round(mn), mx:Math.round(mx)}; }
+
+async function loadFiles(files){
+  if(busy) return; busy=true; pdfArea.innerHTML=""; tilesEl.innerHTML=""; bar.style.display="none";
+  files.sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
+  statusEl.innerHTML='<span class="spin"></span>Folien werden erkannt…';
+  await new Promise(r=>setTimeout(r,30));
+  sources={}; let all=[]; const dbg=[]; let loaded=0;
+  for(const f of files){
+    const kb=Math.round((f.size||0)/1024);
+    let r; try{ r=await decodeFile(f); }catch(e){ dbg.push(`${f.name} (${kb}KB): ⚠ ${e.message}`); continue; }
+    const W=r.W, H=r.H, drawable=r.drawable;
+    if(!W||!H){ dbg.push(`${f.name} (${kb}KB): ⚠ Größe 0 trotz ${r.method}`); continue; }
+    const scale=Math.min(1, DETECT_W/W), dW=Math.max(1,Math.round(W*scale)), dH=Math.max(1,Math.round(H*scale));
+    detCv.width=dW; detCv.height=dH;
+    const ctx=detCv.getContext("2d",{willReadFrequently:true});
+    ctx.clearRect(0,0,dW,dH); ctx.drawImage(drawable,0,0,dW,dH);
+    let data; try{ data=ctx.getImageData(0,0,dW,dH).data; }catch(e){ dbg.push(`${f.name}: ⚠ getImageData blockiert (${e.name})`); continue; }
+    const lu=sampleLum(data);
+    const st=rowStats(data,dW,dH); const det=detectSlides(st,dW,dH); const wmN=detectWatermarks(st,dW,dH).length;
+    sources[f.name]={drawable,W,H}; loaded++;
+    const sc=W/dW;
+    for(const d of det){ const top=Math.round(d.top*sc), bot=Math.round(d.bot*sc);
+      const half=d.top+((d.bot-d.top)>>1);
+      all.push({name:f.name, top, bot, wm:d.wm, h:bot-top,
+        tH:aHash(data,dW,d.top,half), fH:aHash(data,dW,d.top,d.bot)}); }
+    dbg.push(`${f.name} (${kb}KB, ${r.method}): ${W}×${H}→${dW}×${dH}, Hell.Ø${lu.avg}(${lu.mn}/${lu.mx}), WM=${wmN}, Folien=${det.length}`);
+    await new Promise(r=>setTimeout(r,0));
+  }
+  // Dedup über alle Bilder (höhere Folie gewinnt)
+  const kept=[];
+  for(const s of all){ let dup=-1;
+    for(let i=0;i<kept.length;i++){ if(hamming(s.tH,kept[i].tH)<20||hamming(s.fH,kept[i].fH)<26){dup=i;break;} }
+    if(dup>=0){ if(s.h>kept[dup].h) kept[dup]=s; } else kept.push(s); }
+  slides=kept.map(k=>({name:k.name,top:k.top,bot:k.bot,wm:k.wm,tH:k.tH}));
+  busy=false;
+  setDebug("Diagnose:\n"+dbg.join("\n")+`\n→ ${loaded}/${files.length} Bilder gelesen, ${slides.length} Folien nach Entdoppeln`);
+  if(!slides.length){ statusEl.textContent="Keine Folien erkannt. (Diagnose unten – bitte mir den Text schicken.)"; return; }
+  statusEl.textContent=slides.length+" Folien erkannt – bitte prüfen, dann PDF erstellen.";
+  bar.style.display="flex"; renderTiles();
+}
+
+function dupFlags(){ const f=new Array(slides.length).fill(false);
+  for(let i=0;i<slides.length;i++)for(let j=i+1;j<slides.length;j++)
+    if(hamming(slides[i].tH,slides[j].tH)<22){ f[i]=true; f[j]=true; } return f; }
+function thumb(sl){ const src=sources[sl.name], W=src.W, h=sl.bot-sl.top;
+  const tw=360, th=Math.max(1,Math.round(h*tw/W));
+  const c=document.createElement("canvas"); c.width=tw; c.height=th;
+  c.getContext("2d").drawImage(src.drawable,0,sl.top,W,h,0,0,tw,th);
+  c.style.cssText="width:100%;height:auto;border-radius:8px;border:1px solid var(--line);display:block"; return c; }
+function renderTiles(){ tilesEl.innerHTML=""; const df=dupFlags();
+  slides.forEach((sl,i)=>{
+    const t=document.createElement("div"); t.className="tile";
+    const num=document.createElement("div"); num.className="num"; num.textContent=(i+1);
+    const tw=document.createElement("div"); tw.className="thumbwrap"; tw.appendChild(thumb(sl));
+    const badges=document.createElement("div"); badges.className="badges";
+    if(!sl.wm){ const b=document.createElement("span"); b.className="badge warn"; b.textContent="⚠ Unterkante prüfen"; badges.appendChild(b); }
+    if(df[i]){ const b=document.createElement("span"); b.className="badge dup"; b.textContent="möglicherweise doppelt"; badges.appendChild(b); }
+    if(badges.children.length) tw.appendChild(badges);
+    const ctr=document.createElement("div"); ctr.className="ctrls";
+    const up=document.createElement("button"); up.className="ic"; up.textContent="↑"; up.onclick=()=>move(i,-1); if(i===0)up.disabled=true;
+    const dn=document.createElement("button"); dn.className="ic"; dn.textContent="↓"; dn.onclick=()=>move(i,1); if(i===slides.length-1)dn.disabled=true;
+    const del=document.createElement("button"); del.className="ic del"; del.textContent="🗑"; del.onclick=()=>askDelete(i);
+    ctr.append(up,dn,del); t.append(num,tw,ctr); tilesEl.appendChild(t);
+  });
+}
+function move(i,d){ const j=i+d; if(j<0||j>=slides.length) return; [slides[i],slides[j]]=[slides[j],slides[i]]; renderTiles(); }
+function askDelete(i){ confirmModal("Diese Folie aus dem PDF entfernen?",()=>{ slides.splice(i,1);
+  if(!slides.length){ bar.style.display="none"; statusEl.textContent="Keine Folien mehr ausgewählt."; } renderTiles(); }); }
+reverseBtn.onclick=()=>{ slides.reverse(); renderTiles(); };
+wmToggle.onclick=()=>{ wmRemove=!wmRemove; wmSw.classList.toggle("on",wmRemove); };
+function confirmModal(text,onYes){ modalText.textContent=text; overlay.style.display="flex";
+  const close=()=>{ overlay.style.display="none"; modalYes.onclick=null; modalNo.onclick=null; };
+  modalYes.onclick=()=>{ close(); onYes(); }; modalNo.onclick=close; }
+
+function dataURLtoBytes(durl){ const b=atob(durl.split(",")[1]); const u=new Uint8Array(b.length);
+  for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i); return u; }
+function cropCanvas(sl, applyWm){ const src=sources[sl.name], W=src.W, h=sl.bot-sl.top;
+  const c=document.createElement("canvas"); c.width=W; c.height=h;
+  const ctx=c.getContext("2d",{willReadFrequently:true}); ctx.drawImage(src.drawable,0,sl.top,W,h,0,0,W,h);
+  if(applyWm){ try{ const id=ctx.getImageData(0,0,W,h); if(removeWatermark(id.data,W,h)) ctx.putImageData(id,0,0); }catch(e){} }
+  return c; }
+function cropJPEG(sl){ const c=cropCanvas(sl,wmRemove); return {bytes:dataURLtoBytes(c.toDataURL("image/jpeg",0.9)), w:c.width, h:c.height}; }
+let lastPDF=null;
+makePdf.onclick=async()=>{
+  if(busy||!slides.length) return; busy=true; makePdf.disabled=true; pdfArea.innerHTML="";
+  const imgs=[];
+  for(let i=0;i<slides.length;i++){ statusEl.innerHTML='<span class="spin"></span>PDF wird erstellt… ('+(i+1)+'/'+slides.length+')';
+    await new Promise(r=>setTimeout(r,0)); imgs.push(cropJPEG(slides[i])); }
+  lastPDF={bytes:buildPDF(imgs), name:"folien-"+new Date().toISOString().slice(0,10)+".pdf"};
+  statusEl.textContent=slides.length+" Folien · PDF bereit ("+slides.length+" Seiten).";
+  pdfArea.innerHTML="";
+  // Inline-Vorschau Seite 1 — zeigt, ob das Wasserzeichen entfernt wurde
+  try{ const pv=cropCanvas(slides[0], wmRemove); const pw=Math.min(pv.width,560), ph=Math.round(pv.height*pw/pv.width);
+    const pc=document.createElement("canvas"); pc.width=pw; pc.height=ph; pc.getContext("2d").drawImage(pv,0,0,pw,ph);
+    pc.style.cssText="width:100%;height:auto;border:1px solid var(--line);border-radius:10px;display:block;margin-bottom:6px";
+    const pl=document.createElement("div"); pl.style.cssText="font-size:12.5px;color:#6b6a64;margin-bottom:12px";
+    pl.textContent="Vorschau Seite 1 — „NotebookLM\u201c-Wasserzeichen "+(wmRemove?"entfernt ✓":"erhalten (Schalter ist aus)");
+    pdfArea.appendChild(pc); pdfArea.appendChild(pl);
+  }catch(e){}
+  const sb=document.createElement("button"); sb.className="btn";
+  sb.style.cssText="width:100%;padding:15px;font-size:16px"; sb.textContent="📄 PDF speichern / teilen";
+  sb.onclick=savePDF; pdfArea.appendChild(sb);
+  const hint=document.createElement("div"); hint.style.cssText="font-size:12.5px;color:#6b6a64;margin-top:8px;line-height:1.5";
+  hint.textContent="Öffnet die Teilen-Ansicht → „In Dateien sichern“.";
+  pdfArea.appendChild(hint);
+  pdfArea.scrollIntoView({behavior:"smooth",block:"start"});
+  busy=false; makePdf.disabled=false;
+};
+function bytesToB64(bytes){ let bin=""; const C=0x8000;
+  for(let i=0;i<bytes.length;i+=C) bin+=String.fromCharCode.apply(null, bytes.subarray(i,i+C)); return btoa(bin); }
+async function savePDF(){
+  if(!lastPDF) return;
+  const info=[]; const blob=new Blob([lastPDF.bytes],{type:"application/pdf"});
+  let file=null; try{ file=new File([blob],lastPDF.name,{type:"application/pdf"}); }catch(e){ info.push("File:"+e.name); }
+  const hasShare = (typeof navigator!=="undefined") && (typeof navigator.share==="function");
+  let canFiles=false; try{ canFiles = hasShare && navigator.canShare && file && navigator.canShare({files:[file]}); }catch(e){}
+  info.push("teilen="+(hasShare?"verfügbar":"fehlt")+(hasShare?(", Datei-teilen="+(canFiles?"ja":"nein")):""));
+  if(hasShare && file){
+    try{ await navigator.share({files:[file], title:lastPDF.name}); return; }
+    catch(e){ if(e&&e.name==="AbortError") return; info.push("Fehler:"+e.name); }
+  }
+  let durl; try{ durl="data:application/pdf;base64,"+bytesToB64(lastPDF.bytes); }catch(e){ info.push("b64:"+e.name); durl=URL.createObjectURL(blob); }
+  try{ const a=document.createElement("a"); a.href=durl; a.download=lastPDF.name; a.target="_blank"; document.body.appendChild(a); a.click(); a.remove(); }catch(e){ info.push("dl:"+e.name); }
+  const old=document.getElementById("saveDiag"); if(old) old.remove();
+  const d=document.createElement("div"); d.id="saveDiag"; d.style.cssText="margin-top:12px;font-size:13px;line-height:1.55";
+  d.innerHTML='<a href="'+durl+'" download="'+lastPDF.name+'" target="_blank" style="color:#2a5740;font-weight:700">📄 PDF hier öffnen</a>'
+    +'<div style="color:#9a4a2f;margin-top:6px">Falls auch das nichts tut: In dieser App-Vorschau sind Datei-Downloads gesperrt — öffne die App in <b>Safari</b> (deine GitHub-Pages-URL), dort klappt Speichern/Teilen normal.</div>'
+    +'<div style="color:#6b6a64;margin-top:6px;font-size:11.5px">Technik: '+info.join(" · ")+'</div>';
+  pdfArea.appendChild(d);
+}
+</script>
+</body>
+</html>
