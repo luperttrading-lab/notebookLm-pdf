@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>Folien-Extraktor v0.10</title>
+<title>Folien-Extraktor v0.11</title>
 <style>
   :root{ color-scheme: light; --bg:#f4f1ea; --card:#ffffff; --ink:#1c1b18; --mut:#6b6a64;
          --line:#e0ddd4; --acc:#3a6b4f; --acc2:#2a5740; --warn:#b4791f; --dup:#9a4a2f; }
@@ -71,7 +71,7 @@
 <div class="wrap">
   <header>
     <h1>Folien-Extraktor</h1>
-    <div class="v">v0.10 · NotebookLM-Screenshots → PDF</div>
+    <div class="v">v0.11 · NotebookLM-Screenshots → PDF</div>
   </header>
   <p class="hint">Lade deine iPhone-Screenshots der Präsentation hoch. Die App erkennt die einzelnen Folien
   automatisch, du prüfst sie kurz (löschen / umsortieren / Reihenfolge umkehren) und bekommst ein PDF — eine Folie pro Seite.</p>
@@ -108,20 +108,21 @@
 // ---- Folien-Erkennung (Port der validierten Python-Pipeline) ----
 function rowStats(data, W, H){
   // data: Uint8ClampedArray RGBA
-  const content=new Int32Array(H), darkR=new Int32Array(H), darkL=new Int32Array(H), titleInk=new Int32Array(H);
-  const xR=Math.floor(0.85*W), cL=Math.floor(0.18*W), cR=Math.ceil(0.82*W);
+  const content=new Int32Array(H), darkR=new Int32Array(H), darkL=new Int32Array(H), titleInk=new Int32Array(H), frameLine=new Uint8Array(H);
+  const xR=Math.floor(0.85*W), cL=Math.floor(0.18*W), cR=Math.ceil(0.82*W), lineMin=0.78*W;
   for(let y=0;y<H;y++){
-    let c=0,dr=0,dl=0,ti=0, base=y*W*4;
+    let c=0,dr=0,dl=0,ti=0, base=y*W*4, run=0, best=0;
     for(let x=0;x<W;x++){
       const i=base+x*4, r=data[i],g=data[i+1],b=data[i+2];
       const lum=(r+g+b)/3, mx=Math.max(r,g,b), mn=Math.min(r,g,b);
       if(lum<100||(mx-mn)>45) c++;
       if(lum<160 && x>=cL && x<cR) ti++;   // nur Mitte → Rand-Icons (Statusleiste/App-Leiste) zählen nicht
       if(lum<150){ if(x>=xR) dr++; else dl++; }
+      if(lum<198){ run++; if(run>best)best=run; } else run=0;   // längster zusammenhängender Lauf → Rahmen-Querlinie
     }
-    content[y]=c; darkR[y]=dr; darkL[y]=dl; titleInk[y]=ti;
+    content[y]=c; darkR[y]=dr; darkL[y]=dl; titleInk[y]=ti; frameLine[y]= best>=lineMin?1:0;
   }
-  return {content,darkR,darkL,titleInk};
+  return {content,darkR,darkL,titleInk,frameLine};
 }
 function maxIn(arr,a,b){let m=0;for(let i=a;i<b;i++)if(arr[i]>m)m=arr[i];return m;}
 function detectWatermarks(s,W,H){
@@ -170,10 +171,14 @@ function detectSlides(s,W,H){
   const fcStart=Math.round(110*sH), inkThr=Math.max(8,Math.round(20*sW));
   const fc=(y0)=>{ for(let y=Math.max(y0,fcStart);y<H;y++) if(titleInk[y]>=inkThr) return y; return Math.max(y0,fcStart); };
   const mTop=Math.round(20*sH), mBot=Math.round(26*sH), mTail=Math.round(18*sH), trailGap=Math.round(300*sH);
+  const frameWin=Math.round(42*sH), frameMargin=Math.round(8*sH);
+  const adjTop=(t)=>{ for(let y=Math.max(fcStart,t-frameWin); y<=t; y++){ if(s.frameLine[y]) return Math.max(fcStart,y-frameMargin); } return t; };
   const hMin=Math.round(300*sH), hMax=Math.round(1300*sH);
   const cand=[]; let prev=-1;
   for(let i=0;i<wm.length;i++){ const wb=wm[i]; const f=fc(prev+1);
-    let top=Math.max(fcStart,f-mTop), bot=Math.min(H,wb+mBot); prev=wb; cand.push({top,bot,idx:i,wm:true}); }
+    let top=Math.max(fcStart,f-mTop), bot=Math.min(H,wb+mBot); prev=wb;
+    if(i===0) top=adjTop(top);   // erste Folie: durchgehende Rahmen-Querlinie knapp über dem Titel mit einbeziehen
+    cand.push({top,bot,idx:i,wm:true}); }
   if(hasTrail && wm.length){ const f=fc(wm[wm.length-1]+1);
     if(f<Tstart && Tstart-f>trailGap){ const tb=Math.min(H,Tstart+mTail);
       const lw=lenientWMbottoms(s,W,H); const hasW=lw.some(b=> b>=tb-Math.round(80*sH) && b<=tb+5);
@@ -388,7 +393,7 @@ function thumb(sl){ const src=sources[sl.name], W=src.W, h=sl.bot-sl.top;
 function renderTiles(){ tilesEl.innerHTML=""; const df=dupFlags(); const reviewEl=$("review");
   const incn=slides.filter(s=>!s.wm).length;
   reviewEl.innerHTML = incn>0
-    ? '<div style="background:#fdecea;border:1.5px solid #d9534f;color:#a02115;border-radius:12px;padding:12px 14px;font-size:13.5px;font-weight:600;line-height:1.55;margin:6px 0 2px">⚠ '+incn+' Folie'+(incn>1?'n':'')+' ohne Wasserzeichen am unteren Rand — sehr wahrscheinlich unten abgeschnitten. Bitte prüfen und löschen oder die Folie sauber neu aufnehmen.</div>'
+    ? '<div style="background:#fdecea;border:1.5px solid #d9534f;color:#a02115;border-radius:12px;padding:12px 14px;font-size:13.5px;font-weight:600;line-height:1.55;margin:6px 0 2px">⚠ '+incn+' Folie'+(incn>1?'n':'')+' ohne Wasserzeichen am unteren Rand — sehr wahrscheinlich unten abgeschnitten. Bitte prüfen und entweder löschen (🗑) oder mit 📷 ein sauberes Foto der Folie nachladen.</div>'
     : '';
   slides.forEach((sl,i)=>{
     const t=document.createElement("div"); t.className="tile";
@@ -402,14 +407,38 @@ function renderTiles(){ tilesEl.innerHTML=""; const df=dupFlags(); const reviewE
     const ctr=document.createElement("div"); ctr.className="ctrls";
     const up=document.createElement("button"); up.className="ic"; up.textContent="↑"; up.onclick=()=>move(i,-1); if(i===0)up.disabled=true;
     const dn=document.createElement("button"); dn.className="ic"; dn.textContent="↓"; dn.onclick=()=>move(i,1); if(i===slides.length-1)dn.disabled=true;
+    const rep=document.createElement("button"); rep.className="ic"; rep.textContent="📷"; rep.title="Folie durch neues Foto ersetzen"; rep.onclick=()=>startReplace(i);
+    if(!sl.wm){ rep.style.cssText="border-color:#d9534f;color:#d9534f"; }
     const del=document.createElement("button"); del.className="ic del"; del.textContent="🗑"; del.onclick=()=>askDelete(i);
-    ctr.append(up,dn,del); t.append(num,tw,ctr); tilesEl.appendChild(t);
+    ctr.append(up,dn,rep,del); t.append(num,tw,ctr); tilesEl.appendChild(t);
   });
 }
 function move(i,d){ const j=i+d; if(j<0||j>=slides.length) return; [slides[i],slides[j]]=[slides[j],slides[i]]; renderTiles(); }
 function askDelete(i){ confirmModal("Diese Folie aus dem PDF entfernen?",()=>{ slides.splice(i,1);
   if(!slides.length){ bar.style.display="none"; statusEl.textContent="Keine Folien mehr ausgewählt."; } renderTiles(); }); }
 reverseBtn.onclick=()=>{ slides.reverse(); renderTiles(); };
+// ---- Einzelne Folie durch neues Foto ersetzen ----
+const replInput=document.createElement("input"); replInput.type="file"; replInput.accept="image/*"; replInput.style.display="none"; document.body.appendChild(replInput);
+let replaceIdx=-1, replCounter=0;
+function startReplace(i){ replaceIdx=i; replInput.value=""; replInput.click(); }
+replInput.onchange=()=>{ const f=replInput.files&&replInput.files[0]; if(f&&replaceIdx>=0) replaceSlide(replaceIdx,f); };
+async function replaceSlide(idx, file){
+  if(busy) return; busy=true;
+  statusEl.innerHTML='<span class="spin"></span>Ersatz-Folie wird erkannt…'; await new Promise(r=>setTimeout(r,30));
+  let r; try{ r=await decodeFile(file); }catch(e){ busy=false; statusEl.textContent="Ersatzbild nicht lesbar – anderes Foto versuchen."; return; }
+  const W=r.W,H=r.H,drawable=r.drawable;
+  const scale=Math.min(1,DETECT_W/W), dW=Math.max(1,Math.round(W*scale)), dH=Math.max(1,Math.round(H*scale));
+  detCv.width=dW; detCv.height=dH;
+  const ctx=detCv.getContext("2d",{willReadFrequently:true}); ctx.clearRect(0,0,dW,dH); ctx.drawImage(drawable,0,0,dW,dH);
+  let data; try{ data=ctx.getImageData(0,0,dW,dH).data; }catch(e){ busy=false; statusEl.textContent="Bild wird vom Browser blockiert."; return; }
+  const det=detectSlides(rowStats(data,dW,dH),dW,dH); busy=false;
+  if(!det.length){ statusEl.textContent="In diesem Foto wurde keine Folie erkannt – bitte die ganze Folie aufnehmen."; return; }
+  det.sort((a,b)=>(b.bot-b.top)-(a.bot-a.top)); const d=det[0];   // größte erkannte Folie nehmen
+  const sc=W/dW, top=Math.round(d.top*sc), bot=Math.round(d.bot*sc), half=d.top+((d.bot-d.top)>>1);
+  const name="__repl_"+(replCounter++)+"__"+file.name; sources[name]={drawable,W,H};
+  slides[idx]={name, top, bot, wm:d.wm, tH:aHash(data,dW,d.top,half)};
+  statusEl.textContent="Folie "+(idx+1)+" ersetzt"+(det.length>1?" (größte von "+det.length+" erkannten)":"")+(d.wm?" ✓":" – weiterhin ohne Wasserzeichen")+"."; renderTiles();
+}
 wmToggle.onclick=()=>{ wmRemove=!wmRemove; wmSw.classList.toggle("on",wmRemove); };
 function confirmModal(text,onYes){ modalText.textContent=text; overlay.style.display="flex";
   const close=()=>{ overlay.style.display="none"; modalYes.onclick=null; modalNo.onclick=null; };
@@ -459,14 +488,15 @@ async function savePDF(){
   let canFiles=false; try{ canFiles = hasShare && navigator.canShare && file && navigator.canShare({files:[file]}); }catch(e){}
   info.push("teilen="+(hasShare?"verfügbar":"fehlt")+(hasShare?(", Datei-teilen="+(canFiles?"ja":"nein")):""));
   if(hasShare && file){
-    try{ await navigator.share({files:[file], title:lastPDF.name}); return; }
+    try{ await navigator.share({files:[file]}); return; }
     catch(e){ if(e&&e.name==="AbortError") return; info.push("Fehler:"+e.name); }
   }
   let durl; try{ durl="data:application/pdf;base64,"+bytesToB64(lastPDF.bytes); }catch(e){ info.push("b64:"+e.name); durl=URL.createObjectURL(blob); }
-  try{ const a=document.createElement("a"); a.href=durl; a.download=lastPDF.name; a.target="_blank"; document.body.appendChild(a); a.click(); a.remove(); }catch(e){ info.push("dl:"+e.name); }
+  // Auto-Download NUR ohne Teilen-Funktion (auf iOS legt der data-URL-Klick sonst evtl. eine TXT an)
+  if(!hasShare){ try{ const a=document.createElement("a"); a.href=durl; a.download=lastPDF.name; document.body.appendChild(a); a.click(); a.remove(); }catch(e){ info.push("dl:"+e.name); } }
   const old=document.getElementById("saveDiag"); if(old) old.remove();
   const d=document.createElement("div"); d.id="saveDiag"; d.style.cssText="margin-top:12px;font-size:13px;line-height:1.55";
-  d.innerHTML='<a href="'+durl+'" download="'+lastPDF.name+'" target="_blank" style="color:#2a5740;font-weight:700">📄 PDF hier öffnen</a>'
+  d.innerHTML='<a href="'+durl+'" download="'+lastPDF.name+'" style="color:#2a5740;font-weight:700">📄 PDF hier öffnen / sichern</a>'
     +'<div style="color:#9a4a2f;margin-top:6px">Falls auch das nichts tut: In dieser App-Vorschau sind Datei-Downloads gesperrt — öffne die App in <b>Safari</b> (deine GitHub-Pages-URL), dort klappt Speichern/Teilen normal.</div>'
     +'<div style="color:#6b6a64;margin-top:6px;font-size:11.5px">Technik: '+info.join(" · ")+'</div>';
   pdfArea.appendChild(d);
